@@ -7,12 +7,16 @@ from src.infrastructure.query import (
 from src.infrastructure.infrastructure import create_infrastructure
 from src.processor.processor import process_file
 
+
 def process_folder(session, folder_path):
     folder_path = Path(folder_path)
     process_queue = []
 
     for file_path in folder_path.rglob("*"):
-        if file_path.is_file() and file_path.suffix.lower().lstrip('.') in {"mp4", "mkv"}:
+        if (file_path.is_file()
+                and not file_path.name.startswith(".")
+                and file_path.suffix.lower().lstrip('.') in {"mp4", "mkv"}):
+
             result = get_media_by_name(session, file_path.name)
 
             if not result:
