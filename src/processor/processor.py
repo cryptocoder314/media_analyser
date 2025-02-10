@@ -61,6 +61,7 @@ def extract_and_insert_media_info(session, json_result, file_path, content_id):
                          {})
     file_size = general_track.get("FileSize")
     file_extension = general_track.get("FileExtension")
+    overall_bitrate = general_track.get("OverallBitRate", 0)
 
     video_track = next((track for track in json_result.get("media", {}).get("track", []) if track.get("@type") == "Video"), {})
     codec = normalize_codec(video_track.get("Format"))
@@ -81,7 +82,7 @@ def extract_and_insert_media_info(session, json_result, file_path, content_id):
         media_type = 'Movie'
 
     media = insert_media(session, source, media_type, content_id, file_path.name, codec, duration, bitrate_mode, width, height,
-                 framerate_mode, framerate, bitdepth, file_size, file_extension)
+                 framerate_mode, framerate, bitdepth, file_size, file_extension, overall_bitrate)
 
     if media:
         for track in json_result.get("media", {}).get("track", []):

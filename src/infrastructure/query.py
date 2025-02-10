@@ -61,13 +61,13 @@ def insert_content(session, name: str):
     return new_data
 
 
-def insert_media(session, source_name, media_type, content_id, name, codec, duration, bitrate_mode, width, height, framerate_mode, framerate, bitdepth, file_size, file_extension):
+def insert_media(session, source_name, media_type, content_id, name, codec, duration, bitrate_mode, width, height, framerate_mode, framerate, bitdepth, file_size, file_extension, overall_bitrate):
     result = session.execute(
         select(Source.id).where(Source.name == source_name)
     )
     source_id = result.scalar_one_or_none()
 
-    new_data = Media(source_id=source_id, media_type=media_type, content_id=content_id, name=name, codec=codec, duration=duration, bitrate_mode=bitrate_mode, width=width, height=height, framerate_mode=framerate_mode, framerate=framerate, bitdepth=bitdepth, file_size=file_size, file_extension=file_extension)
+    new_data = Media(source_id=source_id, media_type=media_type, content_id=content_id, name=name, codec=codec, duration=duration, bitrate_mode=bitrate_mode, width=width, height=height, framerate_mode=framerate_mode, framerate=framerate, bitdepth=bitdepth, file_size=file_size, file_extension=file_extension, overall_bitrate=overall_bitrate)
     session.add(new_data)
     session.commit()
     session.refresh(new_data)

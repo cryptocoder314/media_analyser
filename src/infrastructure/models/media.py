@@ -32,6 +32,7 @@ class Media(Base):
     codec = Column(String, nullable=False)
     duration = Column(Integer, nullable=False)
     bitrate_mode = Column(String, nullable=True)
+    overall_bitrate = Column(BigInteger, nullable=True)
     width = Column(Integer, nullable=False)
     height = Column(Integer, nullable=False)
     framerate_mode = Column(String, nullable=True)
