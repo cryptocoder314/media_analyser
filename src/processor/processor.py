@@ -22,7 +22,14 @@ ALLOWED_AUDIO_LANGUAGES = {"japanese", "english", "portuguese"}
 ALLOWED_SUBTITLE_LANGUAGES = {"portuguese", "english"}
 
 
-def process_file(session, file_path):
+def process_file(session, file_path, jellyfin_folder=False):
+    if jellyfin_folder:
+        moved = move_file_to_plex(file_path)
+
+        if moved:
+            print(f"File moved from Jellyfin to Plex: {file_path}")
+            return
+
     debug_mode = True if get_configuration('debug_mode') == 'active' else False
     result = process_and_clean_media_info(file_path, debug_mode)
 
@@ -31,7 +38,7 @@ def process_file(session, file_path):
 
     if result:
         extract_media_info(session, file_path)
-        completed = move_file_to_plex(file_path)
+        completed = move_file_to_jellyfin(file_path)
 
         if completed:
             print(f"All process completed for: {file_path}")
@@ -121,7 +128,8 @@ def process_and_clean_media_info(file_path, debug_mode):
         lang = detect_language(track.get("Language", "und"))
 
         if track_type == "Audio":
-            print(f"Detected language: {lang} for {track_type}")
+            title = track.get("Title", "")
+            print(f"Detected language for audio: {lang} of title {title} for {track_type}")
             if lang in ALLOWED_AUDIO_LANGUAGES:
                 edit_params = {"name": lang.capitalize()}
                 if lang == default_audio:
@@ -134,7 +142,8 @@ def process_and_clean_media_info(file_path, debug_mode):
                 track_ids_to_remove.append(track_id)
 
         elif track_type == "Text":
-            print(f"Detected language: {lang} for {track_type}")
+            title = track.get("Title", "")
+            print(f"Detected language for subtitle: {lang} of title {title} for {track_type}")
             if lang in ALLOWED_SUBTITLE_LANGUAGES:
                 title = lang.capitalize()
                 edit_params = {"name": title}
@@ -153,6 +162,8 @@ def process_and_clean_media_info(file_path, debug_mode):
                     return False
                 track_ids_to_remove.append(track_id)
 
+    print("Editing properties")
+
     for track_id, edit_params in tracks_to_edit:
         mkv_edit_cmd = f"mkvpropedit \"{str(file_path)}\""
         for param, value in edit_params.items():
@@ -170,9 +181,23 @@ def process_and_clean_media_info(file_path, debug_mode):
     return True
 
 
+def move_file_to_jellyfin(file_path):
+    new_path_parts = list(file_path.parts)
+    new_path_parts[new_path_parts.index('Processing')] = 'Jellyfin'
+    new_path = Path(*new_path_parts)
+
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+
+    shutil.move(str(file_path), str(new_path))
+
+    if new_path.exists():
+        return True
+    return False
+
+
 def move_file_to_plex(file_path):
     new_path_parts = list(file_path.parts)
-    new_path_parts[new_path_parts.index('Processing')] = 'Plex'
+    new_path_parts[new_path_parts.index('Jellyfin')] = 'Plex'
     new_path = Path(*new_path_parts)
 
     new_path.parent.mkdir(parents=True, exist_ok=True)
