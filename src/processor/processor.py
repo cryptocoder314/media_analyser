@@ -85,7 +85,9 @@ def extract_and_insert_media_info(session, json_result, file_path, content_id):
         media_type = 'Season Episode'
     elif "Specials" in file_path.parent.name:
         media_type = 'Special Episode'
-    elif "Movie" in file_path.parent.name:
+    elif "Movie" in file_path.parent.name and "Anime" in file_path.parent.parent.name:
+        media_type = 'Anime Movie'
+    else:
         media_type = 'Movie'
 
     media = insert_media(session, source, media_type, content_id, file_path.name, codec, duration, bitrate_mode, width, height,
