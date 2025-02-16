@@ -1,6 +1,7 @@
 import subprocess
 import json
 import shutil
+import re
 from pathlib import Path
 from src.infrastructure.query import (
     get_content_by_name,
@@ -19,10 +20,11 @@ from src.common.configuration import get_configuration
 
 FORCED_KEYWORDS = ["forced", "forçada", "forcednarrative"]
 ALLOWED_AUDIO_LANGUAGES = {"japanese", "english", "portuguese"}
-ALLOWED_SUBTITLE_LANGUAGES = {"portuguese", "english"}
+ALLOWED_SUBTITLE_LANGUAGES = {"portuguese", "english", "arabic"}
 
 
 def process_file(session, file_path, jellyfin_folder=False):
+    print(f"Processing file: {file_path.name}")
     if jellyfin_folder:
         moved = move_file_to_plex(file_path)
 
@@ -31,17 +33,18 @@ def process_file(session, file_path, jellyfin_folder=False):
             return
 
     debug_mode = True if get_configuration('debug_mode') == 'active' else False
-    result = process_and_clean_media_info(file_path, debug_mode)
+    organize_result = organize_media_tracks(file_path, debug_mode)
 
-    if debug_mode:
-        return
+    if organize_result:
+        remove_result = remove_unwanted_tracks(file_path)
 
-    if result:
-        extract_media_info(session, file_path)
-        completed = move_file_to_jellyfin(file_path)
+        if remove_result:
+            extract_media_info(session, file_path)
+            completed = move_file_to_jellyfin(file_path)
 
-        if completed:
-            print(f"All process completed for: {file_path}")
+            if completed:
+                print(f"Process completed for: {file_path.name}")
+
 
 def extract_media_info(session, file_path):
     result = subprocess.run(
@@ -110,7 +113,7 @@ def extract_and_insert_media_info(session, json_result, file_path, content_id):
                         track.get("Default") == "Yes", track.get("Forced") == "Yes")
 
 
-def process_and_clean_media_info(file_path, debug_mode):
+def organize_media_tracks(file_path, debug_mode):
     result = subprocess.run([
         "mediainfo", "--Language=raw", "--Output=JSON", file_path
     ], capture_output=True, text=True)
@@ -123,6 +126,9 @@ def process_and_clean_media_info(file_path, debug_mode):
     is_anime = True if "Processing" in str(file_path) and "Anime" in str(file_path) else False
     default_audio = "japanese" if is_anime else "portuguese"
     default_subtitle = "portuguese" if is_anime else None
+    source = file_path.name.split("] ")[0][1:] if "] " in file_path.name else "Unknown"
+    if source == 'Nyaa.Si':
+        manual_review = True
 
     for track in json_result.get("media", {}).get("track", []):
         track_id = track.get("UniqueID")
@@ -132,6 +138,9 @@ def process_and_clean_media_info(file_path, debug_mode):
         if track_type == "Audio":
             title = track.get("Title", "")
             print(f"Detected language for audio: {lang} of title {title} for {track_type}")
+            if lang == "unknown":
+                change_lang = True
+
             if lang in ALLOWED_AUDIO_LANGUAGES:
                 edit_params = {"name": lang.capitalize()}
                 if lang == default_audio:
@@ -146,6 +155,9 @@ def process_and_clean_media_info(file_path, debug_mode):
         elif track_type == "Text":
             title = track.get("Title", "")
             print(f"Detected language for subtitle: {lang} of title {title} for {track_type}")
+            if lang == "unknown":
+                change_lang = True
+
             if lang in ALLOWED_SUBTITLE_LANGUAGES:
                 title = lang.capitalize()
                 edit_params = {"name": title}
@@ -164,7 +176,7 @@ def process_and_clean_media_info(file_path, debug_mode):
                     return False
                 track_ids_to_remove.append(track_id)
 
-    print("Editing properties")
+    print(f"Editing properties from: {file_path.name}")
 
     for track_id, edit_params in tracks_to_edit:
         mkv_edit_cmd = f"mkvpropedit \"{str(file_path)}\""
@@ -181,6 +193,92 @@ def process_and_clean_media_info(file_path, debug_mode):
             return False
 
     return True
+
+
+def remove_unwanted_tracks(mkv_file):
+    cmd = ["mkvmerge", "-J", mkv_file]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"Error processing {mkv_file}: {result.stderr}")
+        return
+
+    mkv_info = json.loads(result.stdout)
+
+    video_tracks = []
+    audio_tracks = []
+    subtitle_tracks = []
+    japanese_audio_found = False
+
+    is_anime = "Processing" in str(mkv_file) and "Anime" in str(mkv_file)
+    allowed_titles = ["portuguese", "english", "japanese"]
+
+    for track in mkv_info["tracks"]:
+        track_id = str(track["id"])
+        track_type = track["type"]
+        lang = track["properties"].get("language", "unknown")
+        title = track["properties"].get("track_name", "").lower()
+
+        if track_type == "video":
+            video_tracks.append(track_id)
+
+        elif is_anime and track_type == "audio":
+            if lang == "jpn":
+                japanese_audio_found = True
+                audio_tracks.append(track_id)
+            else:
+                print(f"Marked track to be removed. Type: {track_type}. Title: {title}. Language: {lang}")
+
+        elif not is_anime and track_type == "audio":
+            if lang != "unknown" and any(re.search(rf"\b{t}\b", title) for t in allowed_titles):
+                audio_tracks.append(track_id)
+            else:
+                print(f"Marked track to be removed. Type: {track_type}. Title: {title}. Language: {lang}")
+
+        elif track_type == "subtitles":
+            if lang != "unknown" and any(re.search(rf"\b{t}\b", title) for t in allowed_titles):
+                subtitle_tracks.append(track_id)
+            else:
+                print(f"Marked track to be removed. Type: {track_type}. Title: {title}. Language: {lang}")
+
+    if is_anime and not japanese_audio_found:
+        audio_tracks = []
+        for track in mkv_info["tracks"]:
+            if track["type"] == "audio":
+                lang = track["properties"].get("language", "unknown")
+                title = track["properties"].get("track_name", "").lower()
+                if lang != "unknown" and any(re.search(rf"\b{t}\b", title) for t in allowed_titles):
+                    audio_tracks.append(str(track["id"]))
+                    print(f"Reverting removal of track because there's no japanese language. Type: {track['type']}. Title: {title}. Language: {lang}")
+
+    if not video_tracks:
+        print(f"Error: No video track found in {mkv_file}")
+        return
+
+    temp_file = f"temp_{mkv_file}"
+    mkvmerge_cmd = [
+        "mkvmerge", "-o", temp_file,
+        "-a", ",".join(audio_tracks),
+        "-s", ",".join(subtitle_tracks),
+        mkv_file
+    ]
+
+    existing_audio_tracks = [str(track["id"]) for track in mkv_info["tracks"] if track["type"] == "audio"]
+    existing_subtitle_tracks = [str(track["id"]) for track in mkv_info["tracks"] if track["type"] == "subtitles"]
+
+    if set(audio_tracks) == set(existing_audio_tracks) and set(subtitle_tracks) == set(existing_subtitle_tracks):
+        print(f"There's no track to remove on {mkv_file.name}")
+        return True
+
+    result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
+
+    if result.returncode == 0:
+        subprocess.run(["mv", temp_file, mkv_file])
+        print(f"Tracks removed with success from: {mkv_file.name}")
+        return True
+    else:
+        print(f"Error processing {mkv_file}: {result.stderr}")
+        return False
 
 
 def move_file_to_jellyfin(file_path):
