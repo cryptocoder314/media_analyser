@@ -19,8 +19,8 @@ from src.common.common import (
 from src.common.configuration import get_configuration
 
 FORCED_KEYWORDS = ["forced", "forçada", "forcednarrative"]
-ALLOWED_AUDIO_LANGUAGES = {"japanese", "english", "portuguese"}
-ALLOWED_SUBTITLE_LANGUAGES = {"portuguese", "english", "arabic"}
+ALLOWED_AUDIO_LANGUAGES = {"japanese", "english", "portuguese", "chinese"}
+ALLOWED_SUBTITLE_LANGUAGES = {"portuguese", "english"}
 
 
 def process_file(session, file_path, jellyfin_folder=False):
@@ -128,6 +128,7 @@ def organize_media_tracks(file_path, debug_mode):
     default_subtitle = "portuguese" if is_anime else None
     source = file_path.name.split("] ")[0][1:] if "] " in file_path.name else "Unknown"
     if source == 'Nyaa.Si':
+        #return False
         manual_review = True
 
     for track in json_result.get("media", {}).get("track", []):
@@ -147,14 +148,21 @@ def organize_media_tracks(file_path, debug_mode):
                     edit_params["flag-default"] = 1
                 tracks_to_edit.append((track_id, edit_params))
             else:
-                if lang == "unknown" and debug_mode != 'active':
-                    print(f"Language unknown for file: {file_path}")
-                    return False
-                track_ids_to_remove.append(track_id)
+                language = track.get("Language", "und")
+                print(f"Changing lang of type {language} and title {title} to remove")
+                edit_params = {"name": "remove"}
+                tracks_to_edit.append((track_id, edit_params))
+                #if lang == "unknown" and debug_mode != 'active':
+                    #print(f"Language unknown for file: {file_path}")
+                    #return False
+                #track_ids_to_remove.append(track_id)
 
         elif track_type == "Text":
             title = track.get("Title", "")
             print(f"Detected language for subtitle: {lang} of title {title} for {track_type}")
+            if "Signs/Songs" in title or "English [Full] [GJM]" in title:
+                lang = "unknown"
+
             if lang == "unknown":
                 change_lang = True
 
@@ -171,10 +179,14 @@ def organize_media_tracks(file_path, debug_mode):
 
                 tracks_to_edit.append((track_id, edit_params))
             else:
-                if lang == "unknown" and debug_mode != 'active':
-                    print(f"Language unknown for file: {file_path}")
-                    return False
-                track_ids_to_remove.append(track_id)
+                language = track.get("Language", "und")
+                print(f"Changing lang of type {language} and title {title} to remove")
+                edit_params = {"name": "remove"}
+                tracks_to_edit.append((track_id, edit_params))
+                #if lang == "unknown" and debug_mode != 'active':
+                    #print(f"Language unknown for file: {file_path}")
+                    #return False
+                #track_ids_to_remove.append(track_id)
 
     print(f"Editing properties from: {file_path.name}")
 
@@ -211,7 +223,7 @@ def remove_unwanted_tracks(mkv_file):
     japanese_audio_found = False
 
     is_anime = "Processing" in str(mkv_file) and "Anime" in str(mkv_file)
-    allowed_titles = ["portuguese", "english", "japanese"]
+    allowed_titles = ["portuguese", "english", "japanese", "chinese"]
 
     for track in mkv_info["tracks"]:
         track_id = str(track["id"])
@@ -223,7 +235,7 @@ def remove_unwanted_tracks(mkv_file):
             video_tracks.append(track_id)
 
         elif is_anime and track_type == "audio":
-            if lang == "jpn":
+            if lang in ("jpn", "zh", "chi"):
                 japanese_audio_found = True
                 audio_tracks.append(track_id)
             else:

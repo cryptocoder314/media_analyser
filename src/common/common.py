@@ -1,7 +1,8 @@
 LANGUAGES = {
     "english": ["english", "ingles", "ingles-us", "en"],
     "portuguese": ["portuguese", "portugues", "pt", "br", "pt-br", "pt_br", "ptbr"],
-    "japanese": ["japanese", "japones", "jp", "ja"]
+    "japanese": ["japanese", "japones", "jp", "ja"],
+    "chinese": ["chinese (mainland china)", "zh"]
 }
 LANGUAGE_MAP = {alias.lower(): lang for lang, aliases in LANGUAGES.items() for alias in aliases}
 
