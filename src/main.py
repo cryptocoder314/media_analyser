@@ -8,8 +8,8 @@ from src.infrastructure.infrastructure import create_infrastructure
 from src.processor.processor import process_file
 
 
-JELLYFIN_TO_PLEX = True
-PROCESS_NYAASI = False
+JELLYFIN_TO_PLEX = False
+PROCESS_EXTERNAL = True
 
 def process_folder(session, folder_path):
     if JELLYFIN_TO_PLEX:
@@ -21,7 +21,7 @@ def process_folder(session, folder_path):
     for file_path in folder_path.rglob("*"):
         if (file_path.is_file()
                 and not file_path.name.startswith(".")
-                and file_path.suffix.lower().lstrip('.') in {"mp4", "mkv"}):
+                and file_path.suffix.lower().lstrip('.') in {"mkv"}):
 
             result = get_media_by_name(session, file_path.name)
 
@@ -34,12 +34,8 @@ def process_folder(session, folder_path):
         print(f"{len(process_queue)} files need to be processed on folder {folder_path}")
 
     for file_path in process_queue:
-        if JELLYFIN_TO_PLEX:
-            process_file(session, file_path, True)
-            continue
-
-        if PROCESS_NYAASI and "[Nyaa.Si]" in file_path.name or not PROCESS_NYAASI and "[Nyaa.Si]" not in file_path.name:
-            process_file(session, file_path, False)
+        if PROCESS_EXTERNAL and "[Nyaa.Si]" in file_path.name or not PROCESS_EXTERNAL and "[Nyaa.Si]" not in file_path.name:
+            process_file(session, file_path, JELLYFIN_TO_PLEX)
 
 
 def main():

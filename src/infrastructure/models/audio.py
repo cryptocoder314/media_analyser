@@ -30,5 +30,4 @@ class Audio(Base):
     channels = Column(Integer, nullable=False)
     title = Column(String, nullable=True)
     language = Column(String, nullable=False)
-    is_default = Column(Boolean, nullable=False)
     created_at = Column(TIMESTAMP, default=func.now())

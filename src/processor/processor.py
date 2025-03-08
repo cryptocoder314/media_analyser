@@ -1,6 +1,7 @@
-import subprocess
-import json
 import shutil
+import json
+import subprocess
+from collections import defaultdict
 import re
 from pathlib import Path
 from src.infrastructure.query import (
@@ -14,68 +15,243 @@ from src.infrastructure.query import (
 )
 from src.common.common import (
     normalize_codec,
-    detect_language
+    detect_language,
+    run_media_info,
+    detect_iso_language_code
 )
 from src.common.configuration import get_configuration
 
 FORCED_KEYWORDS = ["forced", "forçada", "forcednarrative"]
-ALLOWED_AUDIO_LANGUAGES = {"japanese", "english", "portuguese", "chinese"}
-ALLOWED_SUBTITLE_LANGUAGES = {"portuguese", "english"}
 
 
-def process_file(session, file_path, jellyfin_folder=False):
+def process_file(session, file_path, plex=False):
     print(f"Processing file: {file_path.name}")
-    if jellyfin_folder:
-        moved = move_file_to_plex(file_path)
 
-        if moved:
-            print(f"File moved from Jellyfin to Plex: {file_path}")
-            return
+    if plex:
+        move_file(file_path, plex)
+        print(f"File moved from Jellyfin to Plex: {file_path}")
+        return
 
-    debug_mode = True if get_configuration('debug_mode') == 'active' else False
-    organize_result = organize_media_tracks(file_path, debug_mode)
+    renamed_file = rename_media_tracks(file_path)
 
-    if organize_result:
-        remove_result = remove_unwanted_tracks(file_path)
+    if renamed_file:
+        updated_file = remove_unwanted_tracks(file_path)
 
-        if remove_result:
-            extract_media_info(session, file_path)
-            completed = move_file_to_jellyfin(file_path)
+        if updated_file:
+            collected_file = extract_media_info(session, file_path)
 
-            if completed:
-                print(f"Process completed for: {file_path.name}")
+            if collected_file:
+                move_file(file_path, plex)
+                print(f"File moved from Processing to Jellyfin: {file_path.name}")
+                print("------------------------------------------------------------------------------------------------")
+                return
+
+
+def rename_media_tracks(file_path):
+    media_info = run_media_info(file_path)
+    source = extract_source(file_path.name)
+    if not source:
+        return False
+
+    communication_tracks = extract_communication_tracks(media_info)
+    if not communication_tracks:
+        return False
+
+    tracks_by_language = classify_tracks(communication_tracks)
+    if not tracks_by_language:
+        return False
+
+    organized_tracks = resolve_duplicates(tracks_by_language)
+    if not organized_tracks:
+        return False
+
+    return apply_edits(file_path, organized_tracks)
+
+
+def extract_source(file_name):
+    return file_name.split("] ")[0][1:] if "] " in file_name else None
+
+
+def extract_communication_tracks(media_info):
+    return [track for track in media_info.get("media", {}).get("track", []) if track.get("@type") in ("Audio", "Text")]
+
+
+def classify_tracks(tracks):
+    categorized_tracks = {"audio": defaultdict(list), "text": defaultdict(list)}
+
+    for track in tracks:
+        track_info = extract_track_info(track)
+        if not track_info:
+            return False
+
+        category = "audio" if track_info["type"] == "Audio" else "text"
+        categorized_tracks[category][track_info["language"]].append(track_info)
+
+    return categorized_tracks
+
+
+def extract_track_info(track):
+    track_id = track.get("UniqueID")
+    track_type = track.get("@type")
+    title = track.get("Title", "unknown")
+    language = track.get("Language", "unknown")
+
+    if title == "unknown" or language == "unknown":
+        manual_review = True
+
+    new_language = detect_language(language)
+    new_title = new_language.capitalize()
+    language_code = detect_iso_language_code(new_title)
+
+    track_info = {
+        "track_id": track_id,
+        "type": track_type,
+        "language": language,
+        "title": title,
+        "new_language": new_language,
+        "new_title": new_title,
+        "language_code": language_code
+    }
+
+    if track_type == "Text" and any(keyword in title.lower() for keyword in FORCED_KEYWORDS):
+        track_info["forced"] = True
+        track_info["new_title"] += " (Forced)"
+
+    new_title = track_info["new_title"]
+    print(f"Mapped {track_type}. Original code: {language}. New Code: {language_code}. Code lang: {new_language}. Original title: {title}. New title: {new_title}.")
+
+    return track_info
+
+
+def resolve_duplicates(tracks_by_language):
+    organized_tracks = []
+
+    for track_type, languages in tracks_by_language.items():
+        for language, track_list in languages.items():
+            forced_tracks = [t for t in track_list if "(Forced)" in t["new_title"]]
+            normal_tracks = [t for t in track_list if "(Forced)" not in t["new_title"]]
+
+            if len(normal_tracks) > 1:
+                print(f"Duplicate {track_type} tracks found for {language} (Normal):")
+                for track in normal_tracks:
+                    print(f"ID: {track['track_id']}, Old Title: {track['title']}, New Title: {track['new_title']}")
+                keep_id = input("Enter the track ID to keep: ")
+                for track in normal_tracks:
+                    if track['track_id'] != keep_id:
+                        track['new_title'] = "remove"
+
+            if len(forced_tracks) > 1:
+                print(f"Duplicate {track_type} tracks found for {language} (Forced):")
+                for track in forced_tracks:
+                    print(f"ID: {track['track_id']}, Old Title: {track['title']}, New Title: {track['new_title']}")
+                keep_id = input("Enter the track ID to keep: ")
+                for track in forced_tracks:
+                    if track['track_id'] != keep_id:
+                        track['new_title'] = "remove"
+
+            organized_tracks.extend(normal_tracks + forced_tracks)
+
+    return organized_tracks
+
+
+def apply_edits(file_path, tracks):
+    for track in tracks:
+        edit_params = {"name": track["new_title"], "language": track["language_code"]}
+        if track.get("forced"):
+            edit_params["flag-forced"] = 1
+
+        mkv_edit_cmd = f"mkvpropedit \"{str(file_path)}\""
+        for param, value in edit_params.items():
+            mkv_edit_cmd += f" --edit track:={track['track_id']} --set {param}=\"{value}\""
+
+        try:
+            subprocess.run(mkv_edit_cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except subprocess.CalledProcessError as e:
+            print(f"Error on track {track['track_id']}: {e}")
+            return False
+
+    return True
+
+
+def remove_unwanted_tracks(mkv_file):
+    anime_content = "Processing" in str(mkv_file) and "Anime" in str(mkv_file)
+
+    cmd = ["mkvmerge", "-J", mkv_file]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error processing {mkv_file}: {result.stderr}")
+        return False
+
+    mkv_info = json.loads(result.stdout)
+    audio_tracks, subtitle_tracks, removed_tracks = [], [], []
+
+    for track in mkv_info["tracks"]:
+        track_id = str(track["id"])
+        track_type = track["type"]
+        title = track["properties"].get("track_name", "").lower()
+        language = track["properties"].get("language", "unknown")
+
+        if 'remove' in title:
+            removed_tracks.append(track_id)
+
+        if track_type == "audio":
+            if anime_content and title not in {"japanese", "chinese"}:
+                print(f"Removing track of title: '{title}' for breaking language rules")
+                removed_tracks.append(track_id)
+            elif not anime_content and title not in {"english", "portuguese"}:
+                print(f"Removing track of title: '{title}' for breaking language rules")
+                removed_tracks.append(track_id)
+            else:
+                audio_tracks.append(track_id)
+
+        elif track_type == "subtitles":
+            if not any(title.startswith(lang) for lang in {"english", "portuguese"}):
+                print(f"Removing track of title: '{title}' for breaking language rules")
+                removed_tracks.append(track_id)
+            else:
+                subtitle_tracks.append(track_id)
+
+    audio_tracks_after_removal = [t for t in audio_tracks if t not in removed_tracks]
+
+    if anime_content and len(audio_tracks_after_removal) == 0 and any(
+            track_id in removed_tracks for track_id in audio_tracks):
+        print("There's only one audio track left and it would be removed. Aborting.")
+        return False
+
+    if not removed_tracks:
+        return True
+
+    temp_file = f"temp_{mkv_file}"
+    mkvmerge_cmd = ["mkvmerge", "-o", temp_file, "-a", ",".join(audio_tracks_after_removal),
+                    "-s", ",".join(subtitle_tracks), mkv_file]
+
+    result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        subprocess.run(["mv", temp_file, mkv_file])
+        print(f"Tracks removed successfully from {mkv_file}")
+        return True
+    else:
+        print(f"Error processing {mkv_file}: {result.stderr}")
+        return False
 
 
 def extract_media_info(session, file_path):
-    result = subprocess.run(
-        ["mediainfo", "--Language=raw", "--Output=JSON", file_path],
-        capture_output=True, text=True
-    )
-    json_result = json.loads(result.stdout) if result.stdout else {}
+    media_info = run_media_info(file_path)
 
+    anime_content = True if "Processing" in str(file_path) and "Anime" in str(file_path) else False
     content_name = file_path.name.split(" - ", 1)[1].rsplit(".", 1)[0] if "Movie" in str(file_path) else file_path.parent.parent.name
-    content = get_content_by_name(session, content_name)
 
-    if not content:
-        content = insert_content(session, content_name)
-        content_id = content.id
-    else:
-        content_id = content.id
-
-    extract_and_insert_media_info(session, json_result, file_path, content_id)
-
-
-def extract_and_insert_media_info(session, json_result, file_path, content_id):
     source = file_path.name.split("] ")[0][1:] if "] " in file_path.name else "Unknown"
-    general_track = next((track for track in json_result.get("media", {}).get("track", []) if track.get("@type") == "General"),
+    general_track = next((track for track in media_info.get("media", {}).get("track", []) if track.get("@type") == "General"),
                          {})
     file_size = general_track.get("FileSize")
     file_extension = general_track.get("FileExtension")
     overall_bitrate = general_track.get("OverallBitRate", 0)
 
-    video_track = next((track for track in json_result.get("media", {}).get("track", []) if track.get("@type") == "Video"), {})
+    video_track = next((track for track in media_info.get("media", {}).get("track", []) if track.get("@type") == "Video"), {})
     codec = normalize_codec(video_track.get("Format"))
     duration = int(float(video_track.get("Duration", 0))) if video_track.get("Duration") else None
+
     bitrate_mode = video_track.get("BitRate_Mode")
     width = int(video_track.get("Width", 0)) if video_track.get("Width") else None
     height = int(video_track.get("Height", 0)) if video_track.get("Height") else None
@@ -83,26 +259,45 @@ def extract_and_insert_media_info(session, json_result, file_path, content_id):
     framerate = float(video_track.get("FrameRate", 0)) if video_track.get("FrameRate") else None
     bitdepth = int(video_track.get("BitDepth", 0)) if video_track.get("BitDepth") else None
 
-    media_type = None
     if "Season" in file_path.parent.name:
         media_type = 'Season Episode'
     elif "Specials" in file_path.parent.name:
         media_type = 'Special Episode'
     elif "Movie" in file_path.parent.name and "Anime" in file_path.parent.parent.name:
         media_type = 'Anime Movie'
+        category = 'Anime'
     else:
         media_type = 'Movie'
+        category = media_type
+
+    if media_type in ('Season Episode', 'Special Episode') and "Anime" in file_path.parent.parent.name:
+        category = 'Anime'
+    elif media_type in ('Season Episode', 'Special Episode') and "Anime" not in file_path.parent.parent.name:
+        category = 'TV Show'
+
+    if not duration:
+        return False
+
+    if not framerate:
+        return False
+
+    content = get_content_by_name(session, content_name)
+    if not content:
+        content = insert_content(session, content_name, category)
+        content_id = content.id
+    else:
+        content_id = content.id
 
     media = insert_media(session, source, media_type, content_id, file_path.name, codec, duration, bitrate_mode, width, height,
                  framerate_mode, framerate, bitdepth, file_size, file_extension, overall_bitrate)
 
     if media:
-        for track in json_result.get("media", {}).get("track", []):
+        for track in media_info.get("media", {}).get("track", []):
             if track.get("@type") == "Audio":
                 audio = get_audio_by_media_id_title_and_language(session, media.id, track.get("Title"), track.get("Language"))
 
                 if not audio:
-                    insert_audio(session, media.id, track.get("Format"), int(track.get("Channels", 0)), track.get("Title"), detect_language(track.get("Language", "")), track.get("Default") == "Yes")
+                    insert_audio(session, media.id, track.get("Format"), int(track.get("Channels", 0)), track.get("Title"), detect_language(track.get("Language", "")))
             elif track.get("@type") == "Text":
                 subtitle = get_subtitle_by_media_id_title_and_language(session, media.id, track.get("Title"),
                                                                  track.get("Language"))
@@ -110,206 +305,15 @@ def extract_and_insert_media_info(session, json_result, file_path, content_id):
                 if not subtitle:
                     insert_subtitle(session, media.id, track.get("Title"),
                         detect_language(track.get("Language", "")),
-                        track.get("Default") == "Yes", track.get("Forced") == "Yes")
-
-
-def organize_media_tracks(file_path, debug_mode):
-    result = subprocess.run([
-        "mediainfo", "--Language=raw", "--Output=JSON", file_path
-    ], capture_output=True, text=True)
-
-    json_result = json.loads(result.stdout) if result.stdout else {}
-
-    track_ids_to_remove = []
-    tracks_to_edit = []
-
-    is_anime = True if "Processing" in str(file_path) and "Anime" in str(file_path) else False
-    default_audio = "japanese" if is_anime else "portuguese"
-    default_subtitle = "portuguese" if is_anime else None
-    source = file_path.name.split("] ")[0][1:] if "] " in file_path.name else "Unknown"
-    if source == 'Nyaa.Si':
-        #return False
-        manual_review = True
-
-    for track in json_result.get("media", {}).get("track", []):
-        track_id = track.get("UniqueID")
-        track_type = track.get("@type")
-        lang = detect_language(track.get("Language", "und"))
-
-        if track_type == "Audio":
-            title = track.get("Title", "")
-            print(f"Detected language for audio: {lang} of title {title} for {track_type}")
-            if lang == "unknown":
-                change_lang = True
-
-            if lang in ALLOWED_AUDIO_LANGUAGES:
-                edit_params = {"name": lang.capitalize()}
-                if lang == default_audio:
-                    edit_params["flag-default"] = 1
-                tracks_to_edit.append((track_id, edit_params))
-            else:
-                language = track.get("Language", "und")
-                print(f"Changing lang of type {language} and title {title} to remove")
-                edit_params = {"name": "remove"}
-                tracks_to_edit.append((track_id, edit_params))
-                #if lang == "unknown" and debug_mode != 'active':
-                    #print(f"Language unknown for file: {file_path}")
-                    #return False
-                #track_ids_to_remove.append(track_id)
-
-        elif track_type == "Text":
-            title = track.get("Title", "")
-            print(f"Detected language for subtitle: {lang} of title {title} for {track_type}")
-            if "Signs/Songs" in title or "English [Full] [GJM]" in title:
-                lang = "unknown"
-
-            if lang == "unknown":
-                change_lang = True
-
-            if lang in ALLOWED_SUBTITLE_LANGUAGES:
-                title = lang.capitalize()
-                edit_params = {"name": title}
-
-                if any(keyword in track.get("Title", "").lower() for keyword in FORCED_KEYWORDS):
-                    edit_params["flag-forced"] = 1
-                    edit_params["name"] += " (Forced)"
-
-                if lang == default_subtitle:
-                    edit_params["flag-default"] = 1
-
-                tracks_to_edit.append((track_id, edit_params))
-            else:
-                language = track.get("Language", "und")
-                print(f"Changing lang of type {language} and title {title} to remove")
-                edit_params = {"name": "remove"}
-                tracks_to_edit.append((track_id, edit_params))
-                #if lang == "unknown" and debug_mode != 'active':
-                    #print(f"Language unknown for file: {file_path}")
-                    #return False
-                #track_ids_to_remove.append(track_id)
-
-    print(f"Editing properties from: {file_path.name}")
-
-    for track_id, edit_params in tracks_to_edit:
-        mkv_edit_cmd = f"mkvpropedit \"{str(file_path)}\""
-        for param, value in edit_params.items():
-            mkv_edit_cmd += f" --edit track:={track_id} --set {param}=\"{value}\""
-        try:
-            if debug_mode:
-                print("Debug mode active. Will not overwrite file")
-                continue
-
-            subprocess.run(mkv_edit_cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except subprocess.CalledProcessError as e:
-            print(f"Error on track {track_id}: {e}")
-            return False
+                        track.get("Forced") == "Yes")
 
     return True
 
 
-def remove_unwanted_tracks(mkv_file):
-    cmd = ["mkvmerge", "-J", mkv_file]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        print(f"Error processing {mkv_file}: {result.stderr}")
-        return
-
-    mkv_info = json.loads(result.stdout)
-
-    video_tracks = []
-    audio_tracks = []
-    subtitle_tracks = []
-    japanese_audio_found = False
-
-    is_anime = "Processing" in str(mkv_file) and "Anime" in str(mkv_file)
-    allowed_titles = ["portuguese", "english", "japanese", "chinese"]
-
-    for track in mkv_info["tracks"]:
-        track_id = str(track["id"])
-        track_type = track["type"]
-        lang = track["properties"].get("language", "unknown")
-        title = track["properties"].get("track_name", "").lower()
-
-        if track_type == "video":
-            video_tracks.append(track_id)
-
-        elif is_anime and track_type == "audio":
-            if lang in ("jpn", "zh", "chi"):
-                japanese_audio_found = True
-                audio_tracks.append(track_id)
-            else:
-                print(f"Marked track to be removed. Type: {track_type}. Title: {title}. Language: {lang}")
-
-        elif not is_anime and track_type == "audio":
-            if lang != "unknown" and any(re.search(rf"\b{t}\b", title) for t in allowed_titles):
-                audio_tracks.append(track_id)
-            else:
-                print(f"Marked track to be removed. Type: {track_type}. Title: {title}. Language: {lang}")
-
-        elif track_type == "subtitles":
-            if lang != "unknown" and any(re.search(rf"\b{t}\b", title) for t in allowed_titles):
-                subtitle_tracks.append(track_id)
-            else:
-                print(f"Marked track to be removed. Type: {track_type}. Title: {title}. Language: {lang}")
-
-    if is_anime and not japanese_audio_found:
-        audio_tracks = []
-        for track in mkv_info["tracks"]:
-            if track["type"] == "audio":
-                lang = track["properties"].get("language", "unknown")
-                title = track["properties"].get("track_name", "").lower()
-                if lang != "unknown" and any(re.search(rf"\b{t}\b", title) for t in allowed_titles):
-                    audio_tracks.append(str(track["id"]))
-                    print(f"Reverting removal of track because there's no japanese language. Type: {track['type']}. Title: {title}. Language: {lang}")
-
-    if not video_tracks:
-        print(f"Error: No video track found in {mkv_file}")
-        return
-
-    temp_file = f"temp_{mkv_file}"
-    mkvmerge_cmd = [
-        "mkvmerge", "-o", temp_file,
-        "-a", ",".join(audio_tracks),
-        "-s", ",".join(subtitle_tracks),
-        mkv_file
-    ]
-
-    existing_audio_tracks = [str(track["id"]) for track in mkv_info["tracks"] if track["type"] == "audio"]
-    existing_subtitle_tracks = [str(track["id"]) for track in mkv_info["tracks"] if track["type"] == "subtitles"]
-
-    if set(audio_tracks) == set(existing_audio_tracks) and set(subtitle_tracks) == set(existing_subtitle_tracks):
-        print(f"There's no track to remove on {mkv_file.name}")
-        return True
-
-    result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
-
-    if result.returncode == 0:
-        subprocess.run(["mv", temp_file, mkv_file])
-        print(f"Tracks removed with success from: {mkv_file.name}")
-        return True
-    else:
-        print(f"Error processing {mkv_file}: {result.stderr}")
-        return False
-
-
-def move_file_to_jellyfin(file_path):
+def move_file(file_path, plex):
+    folder = 'Plex' if plex == True else 'Jellyfin'
     new_path_parts = list(file_path.parts)
-    new_path_parts[new_path_parts.index('Processing')] = 'Jellyfin'
-    new_path = Path(*new_path_parts)
-
-    new_path.parent.mkdir(parents=True, exist_ok=True)
-
-    shutil.move(str(file_path), str(new_path))
-
-    if new_path.exists():
-        return True
-    return False
-
-
-def move_file_to_plex(file_path):
-    new_path_parts = list(file_path.parts)
-    new_path_parts[new_path_parts.index('Jellyfin')] = 'Plex'
+    new_path_parts[new_path_parts.index('Processing')] = folder
     new_path = Path(*new_path_parts)
 
     new_path.parent.mkdir(parents=True, exist_ok=True)

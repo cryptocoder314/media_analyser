@@ -28,6 +28,5 @@ class Subtitle(Base):
     media_id = Column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.media.id"), nullable=False)
     title = Column(String, nullable=True)
     language = Column(String, nullable=False)
-    is_default = Column(Boolean, nullable=False)
     is_forced = Column(Boolean, nullable=False)
     created_at = Column(TIMESTAMP, default=func.now())
