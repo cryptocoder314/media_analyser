@@ -8,8 +8,8 @@ from src.infrastructure.infrastructure import create_infrastructure
 from src.processor.processor import process_file
 
 
-JELLYFIN_TO_PLEX = False
-PROCESS_EXTERNAL = True
+JELLYFIN_TO_PLEX = True
+PROCESS_EXTERNAL = False
 
 def process_folder(session, folder_path):
     if JELLYFIN_TO_PLEX:

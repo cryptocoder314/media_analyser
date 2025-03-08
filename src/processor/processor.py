@@ -28,7 +28,7 @@ def process_file(session, file_path, plex=False):
     print(f"Processing file: {file_path.name}")
 
     if plex:
-        move_file(file_path, plex)
+        move_file_to_plex(file_path)
         print(f"File moved from Jellyfin to Plex: {file_path}")
         return
 
@@ -41,7 +41,7 @@ def process_file(session, file_path, plex=False):
             collected_file = extract_media_info(session, file_path)
 
             if collected_file:
-                move_file(file_path, plex)
+                move_file_to_jellyfin(file_path)
                 print(f"File moved from Processing to Jellyfin: {file_path.name}")
                 print("------------------------------------------------------------------------------------------------")
                 return
@@ -310,10 +310,23 @@ def extract_media_info(session, file_path):
     return True
 
 
-def move_file(file_path, plex):
-    folder = 'Plex' if plex == True else 'Jellyfin'
+def move_file_to_jellyfin(file_path):
     new_path_parts = list(file_path.parts)
-    new_path_parts[new_path_parts.index('Processing')] = folder
+    new_path_parts[new_path_parts.index('Processing')] = 'Jellyfin'
+    new_path = Path(*new_path_parts)
+
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+
+    shutil.move(str(file_path), str(new_path))
+
+    if new_path.exists():
+        return True
+    return False
+
+
+def move_file_to_plex(file_path):
+    new_path_parts = list(file_path.parts)
+    new_path_parts[new_path_parts.index('Jellyfin')] = 'Plex'
     new_path = Path(*new_path_parts)
 
     new_path.parent.mkdir(parents=True, exist_ok=True)
