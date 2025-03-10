@@ -17,9 +17,9 @@ from src.common.common import (
     normalize_codec,
     detect_language,
     run_media_info,
+    run_ffprobe,
     detect_iso_language_code
 )
-from src.common.configuration import get_configuration
 
 FORCED_KEYWORDS = ["forced", "forçada", "forcednarrative"]
 
@@ -275,10 +275,14 @@ def extract_media_info(session, file_path):
     elif media_type in ('Season Episode', 'Special Episode') and "Anime" not in file_path.parent.parent.name:
         category = 'TV Show'
 
-    if not duration:
-        return False
+    if not duration or not framerate:
+        # Handling rare cases where the .mkv was created without trusted metadata
+        ffprobe_result = run_ffprobe(file_path)
 
-    if not framerate:
+        duration = int(float(ffprobe_result["format"]["duration"])) if "format" in ffprobe_result else None
+        framerate = 25
+
+    if not duration or not framerate:
         return False
 
     content = get_content_by_name(session, content_name)

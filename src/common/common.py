@@ -70,3 +70,17 @@ def run_media_info(file_path):
     json_result = json.loads(result.stdout) if result.stdout else {}
 
     return json_result
+
+
+def run_ffprobe(file_path):
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "json", file_path
+        ],
+        capture_output=True, text=True
+    )
+
+    json_result = json.loads(result.stdout) if result.stdout else {}
+
+    return json_result
