@@ -2,7 +2,6 @@ import shutil
 import json
 import subprocess
 from collections import defaultdict
-import re
 from pathlib import Path
 from src.infrastructure.query import (
     get_content_by_name,
@@ -25,13 +24,12 @@ FORCED_KEYWORDS = ["forced", "forçada", "forcednarrative"]
 
 
 def process_file(session, file_path, plex=False):
-    print(f"Processing file: {file_path.name}")
-
     if plex:
         move_file_to_plex(file_path)
-        print(f"File moved from Jellyfin to Plex: {file_path}")
+        print(f"File moved from Jellyfin to Plex: {file_path.name}")
         return
 
+    print(f"Processing file: {file_path.name}")
     renamed_file = rename_media_tracks(file_path)
 
     if renamed_file:
@@ -57,7 +55,7 @@ def rename_media_tracks(file_path):
     if not communication_tracks:
         return False
 
-    tracks_by_language = classify_tracks(communication_tracks)
+    tracks_by_language = classify_tracks(communication_tracks, source)
     if not tracks_by_language:
         return False
 
@@ -76,11 +74,11 @@ def extract_communication_tracks(media_info):
     return [track for track in media_info.get("media", {}).get("track", []) if track.get("@type") in ("Audio", "Text")]
 
 
-def classify_tracks(tracks):
+def classify_tracks(tracks, source):
     categorized_tracks = {"audio": defaultdict(list), "text": defaultdict(list)}
 
     for track in tracks:
-        track_info = extract_track_info(track)
+        track_info = extract_track_info(track, source)
         if not track_info:
             return False
 
@@ -90,18 +88,20 @@ def classify_tracks(tracks):
     return categorized_tracks
 
 
-def extract_track_info(track):
+def extract_track_info(track, source):
     track_id = track.get("UniqueID")
     track_type = track.get("@type")
     title = track.get("Title", "unknown")
     language = track.get("Language", "unknown")
 
-    if title == "unknown" or language == "unknown":
+    # if title == "unknown" or language == "unknown":
+    if language == "unknown":
         manual_review = True
 
     new_language = detect_language(language)
     new_title = new_language.capitalize()
     language_code = detect_iso_language_code(new_title)
+    frame_count = int(track.get("FrameCount", 0))
 
     track_info = {
         "track_id": track_id,
@@ -113,14 +113,26 @@ def extract_track_info(track):
         "language_code": language_code
     }
 
-    if track_type == "Text" and any(keyword in title.lower() for keyword in FORCED_KEYWORDS):
-        track_info["forced"] = True
-        track_info["new_title"] += " (Forced)"
+    if track_type == "Text":
+        track_info["forced"] = False
+        if any(keyword in title.lower() for keyword in FORCED_KEYWORDS):
+            track_info["forced"] = True
+        elif is_likely_forced(track) and source == 'Max':
+            track_info["forced"] = True
+
+        if track_info["forced"]:
+            track_info["new_title"] += " (Forced)"
 
     new_title = track_info["new_title"]
-    print(f"Mapped {track_type}. Original code: {language}. New Code: {language_code}. Code lang: {new_language}. Original title: {title}. New title: {new_title}.")
+    print(f"Mapped {track_type}. Original code: {language}. New Code: {language_code}. Code lang: {new_language}. Original title: {title}. New title: {new_title}. Frame count: {frame_count}. ID: {track_id}")
 
     return track_info
+
+
+def is_likely_forced(track):
+    frame_count = int(track.get("FrameCount", 0))
+
+    return frame_count < 200
 
 
 def resolve_duplicates(tracks_by_language):
@@ -136,6 +148,10 @@ def resolve_duplicates(tracks_by_language):
                 for track in normal_tracks:
                     print(f"ID: {track['track_id']}, Old Title: {track['title']}, New Title: {track['new_title']}")
                 keep_id = input("Enter the track ID to keep: ")
+
+                if keep_id == 0:
+                    return False
+
                 for track in normal_tracks:
                     if track['track_id'] != keep_id:
                         track['new_title'] = "remove"
@@ -145,6 +161,10 @@ def resolve_duplicates(tracks_by_language):
                 for track in forced_tracks:
                     print(f"ID: {track['track_id']}, Old Title: {track['title']}, New Title: {track['new_title']}")
                 keep_id = input("Enter the track ID to keep: ")
+
+                if keep_id == 0:
+                    return False
+
                 for track in forced_tracks:
                     if track['track_id'] != keep_id:
                         track['new_title'] = "remove"
@@ -225,7 +245,11 @@ def remove_unwanted_tracks(mkv_file):
     mkvmerge_cmd = ["mkvmerge", "-o", temp_file, "-a", ",".join(audio_tracks_after_removal),
                     "-s", ",".join(subtitle_tracks), mkv_file]
 
-    result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
+    if len(removed_tracks) == 1 and "[Nyaa.Si] - Hell Girl (2005)" in mkv_file.name:
+        result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
+    else:
+        result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
+
     if result.returncode == 0:
         subprocess.run(["mv", temp_file, mkv_file])
         print(f"Tracks removed successfully from {mkv_file}")
@@ -238,7 +262,6 @@ def remove_unwanted_tracks(mkv_file):
 def extract_media_info(session, file_path):
     media_info = run_media_info(file_path)
 
-    anime_content = True if "Processing" in str(file_path) and "Anime" in str(file_path) else False
     content_name = file_path.name.split(" - ", 1)[1].rsplit(".", 1)[0] if "Movie" in str(file_path) else file_path.parent.parent.name
 
     source = file_path.name.split("] ")[0][1:] if "] " in file_path.name else "Unknown"
