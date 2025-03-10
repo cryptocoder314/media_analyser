@@ -270,9 +270,9 @@ def extract_media_info(session, file_path):
         media_type = 'Movie'
         category = media_type
 
-    if media_type in ('Season Episode', 'Special Episode') and "Anime" in file_path.parent.parent.name:
+    if media_type in ('Season Episode', 'Special Episode') and "Anime" in file_path.parent.parent.parent.parent.name:
         category = 'Anime'
-    elif media_type in ('Season Episode', 'Special Episode') and "Anime" not in file_path.parent.parent.name:
+    elif media_type in ('Season Episode', 'Special Episode') and "Anime" not in file_path.parent.parent.parent.parent.name:
         category = 'TV Show'
 
     if not duration or not framerate:
