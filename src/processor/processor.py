@@ -83,7 +83,7 @@ def classify_tracks(tracks, source):
             return False
 
         category = "audio" if track_info["type"] == "Audio" else "text"
-        categorized_tracks[category][track_info["language"]].append(track_info)
+        categorized_tracks[category][track_info["new_language"]].append(track_info)
 
     return categorized_tracks
 
@@ -95,7 +95,7 @@ def extract_track_info(track, source):
     language = track.get("Language", "unknown")
 
     # if title == "unknown" or language == "unknown":
-    if language == "unknown":
+    if language == "unknown" or "eng" in title.lower() and language not in ("eng", "eg", "en"):
         manual_review = True
 
     new_language = detect_language(language)
@@ -142,6 +142,7 @@ def resolve_duplicates(tracks_by_language):
         for language, track_list in languages.items():
             forced_tracks = [t for t in track_list if "(Forced)" in t["new_title"]]
             normal_tracks = [t for t in track_list if "(Forced)" not in t["new_title"]]
+            normal_tracks = [t for t in normal_tracks if "remove" not in t["new_language"]]
 
             if len(normal_tracks) > 1:
                 print(f"Duplicate {track_type} tracks found for {language} (Normal):")
@@ -216,17 +217,17 @@ def remove_unwanted_tracks(mkv_file):
 
         if track_type == "audio":
             if anime_content and title not in {"japanese", "chinese"}:
-                print(f"Removing track of title: '{title}' for breaking language rules")
+                print(f"Removing track type {track_type} of title: '{title}' for breaking language rules")
                 removed_tracks.append(track_id)
             elif not anime_content and title not in {"english", "portuguese"}:
-                print(f"Removing track of title: '{title}' for breaking language rules")
+                print(f"Removing track type {track_type} of title: '{title}' for breaking language rules")
                 removed_tracks.append(track_id)
             else:
                 audio_tracks.append(track_id)
 
         elif track_type == "subtitles":
             if not any(title.startswith(lang) for lang in {"english", "portuguese"}):
-                print(f"Removing track of title: '{title}' for breaking language rules")
+                print(f"Removing track type {track_type} of title: '{title}' for breaking language rules")
                 removed_tracks.append(track_id)
             else:
                 subtitle_tracks.append(track_id)
@@ -245,10 +246,7 @@ def remove_unwanted_tracks(mkv_file):
     mkvmerge_cmd = ["mkvmerge", "-o", temp_file, "-a", ",".join(audio_tracks_after_removal),
                     "-s", ",".join(subtitle_tracks), mkv_file]
 
-    if len(removed_tracks) == 1 and "[Nyaa.Si] - Hell Girl (2005)" in mkv_file.name:
-        result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
-    else:
-        result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
+    result = subprocess.run(mkvmerge_cmd, capture_output=True, text=True)
 
     if result.returncode == 0:
         subprocess.run(["mv", temp_file, mkv_file])

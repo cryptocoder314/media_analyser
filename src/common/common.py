@@ -6,17 +6,7 @@ LANGUAGES = {
     "english": ["english", "ingles", "ingles-us", "en", "eng"],
     "portuguese": ["portuguese", "portugues", "pt", "br", "pt-br", "pt_br", "ptbr", "por"],
     "japanese": ["japanese", "japones", "jp", "ja", "jpn"],
-    "chinese": ["chinese (mainland china)", "zh", "chi", "zho"],
-    "spanish": ["spa"],
-    "french": ["fra"],
-    "german": ["ger"],
-    "italian": ["ita"],
-    "korean": ["kor"],
-    "russian": ["rus"],
-    "dutch": ["dut", "nld"],
-    "arabic": ["ara", "ar"],
-    "turkish": ["tur"],
-    "hindi": ["hin"]
+    "chinese": ["chinese (mainland china)", "zh", "chi", "zho"]
 }
 ISO_639_2 = {
     "english": ["eng"],
