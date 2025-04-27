@@ -45,11 +45,11 @@ def main():
         print("Starting processor")
 
         folders = [
-            "processing_cartoon_folder",
-            "processing_movie_folder",
-            "processing_show_folder",
-            "processing_anime_show_folder",
-            "processing_anime_movie_folder"
+            "processing_cartoon_folder"
+            ,"processing_movie_folder"
+            ,"processing_show_folder"
+            ,"processing_anime_movie_folder"
+            ,"processing_anime_show_folder"
         ]
 
         for folder in folders:
