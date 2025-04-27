@@ -104,8 +104,17 @@ def extract_track_info(track, source):
     title = track.get("Title", "unknown")
     language = track.get("Language", "unknown")
 
-    # if title == "unknown" or language == "unknown":
+    if language == 'ja' and "english" in title.lower():
+        language = 'en'
+
+    if language == 'en' and "japanese" in title.lower():
+        language = 'ja'
+
+    if language == 'enm':
+        language = 'en'
+
     if language == "unknown" or "eng" in title.lower() and language not in ("eng", "eg", "en"):
+        #return False
         manual_review = True
 
     new_language = detect_language(language)
@@ -124,10 +133,13 @@ def extract_track_info(track, source):
     }
 
     if track_type == "Text":
+        if frame_count == 0 and source == 'Max' or frame_count == 0 and source == 'Disney+':
+            manual_review = True
+
         track_info["forced"] = False
         if any(keyword in title.lower() for keyword in FORCED_KEYWORDS):
             track_info["forced"] = True
-        elif is_likely_forced(track) and source == 'Max':
+        elif is_likely_forced(track) and source == 'Max' or is_likely_forced(track) and source == 'Disney+':
             track_info["forced"] = True
 
         if track_info["forced"]:
