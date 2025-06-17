@@ -5,8 +5,8 @@ import json
 LANGUAGES = {
     "english": ["english", "ingles", "ingles-us", "en", "eng"],
     "portuguese": ["portuguese", "portugues", "pt", "br", "pt-br", "pt_br", "ptbr", "por"],
-    "japanese": ["japanese", "japones", "jp", "ja", "jpn"],
-    "chinese": ["chinese (mainland china)", "zh", "chi", "zho"]
+    "japanese": ["japanese", "japones", "jp", "ja", "jpn", "ja-JP"],
+    "chinese": ["chinese (mainland china)", "zh", "chi", "zho", "cmn", "zh-CN"]
 }
 ISO_639_2 = {
     "english": ["eng"],

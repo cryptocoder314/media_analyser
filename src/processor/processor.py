@@ -23,12 +23,7 @@ from src.common.common import (
 FORCED_KEYWORDS = ["forced", "forçada", "forcednarrative"]
 
 
-def process_file(session, file_path, plex=False):
-    if plex:
-        move_file_to_plex(file_path)
-        print(f"File moved from Jellyfin to Plex: {file_path.name}")
-        return
-
+def process_file(session, file_path):
     print(f"Processing file: {file_path.name}")
     renamed_file = rename_media_tracks(file_path)
 
@@ -39,8 +34,8 @@ def process_file(session, file_path, plex=False):
             collected_file = extract_media_info(session, file_path)
 
             if collected_file:
-                move_file_to_jellyfin(file_path)
-                print(f"File moved from Processing to Jellyfin: {file_path.name}")
+                move_file_to_plex(file_path)
+                print(f"File moved from Processing to Plex: {file_path.name}")
                 print(
                     "------------------------------------------------------------------------------------------------")
                 print(
@@ -113,8 +108,14 @@ def extract_track_info(track, source):
     if language == 'enm':
         language = 'en'
 
+    # if language == "unknown" or language == "mt" or language == "ms" or language == "zu":
+        # language = 'chi'
+
     if language == "unknown" or "eng" in title.lower() and language not in ("eng", "eg", "en"):
         #return False
+        manual_review = True
+
+    if track_type == "Text" and language == 'ja' or track_type == "Text" and "sign" in title.lower():
         manual_review = True
 
     new_language = detect_language(language)
@@ -139,7 +140,8 @@ def extract_track_info(track, source):
         track_info["forced"] = False
         if any(keyword in title.lower() for keyword in FORCED_KEYWORDS):
             track_info["forced"] = True
-        elif is_likely_forced(track) and source == 'Max' or is_likely_forced(track) and source == 'Disney+':
+        #elif is_likely_forced(frame_count) and source == 'Max' or is_likely_forced(frame_count) and source == 'Disney+':
+        elif is_likely_forced(frame_count) and source == 'Max':
             track_info["forced"] = True
 
         if track_info["forced"]:
@@ -151,9 +153,7 @@ def extract_track_info(track, source):
     return track_info
 
 
-def is_likely_forced(track):
-    frame_count = int(track.get("FrameCount", 0))
-
+def is_likely_forced(frame_count):
     return frame_count < 200
 
 
@@ -357,23 +357,9 @@ def extract_media_info(session, file_path):
     return True
 
 
-def move_file_to_jellyfin(file_path):
-    new_path_parts = list(file_path.parts)
-    new_path_parts[new_path_parts.index('Processing')] = 'Jellyfin'
-    new_path = Path(*new_path_parts)
-
-    new_path.parent.mkdir(parents=True, exist_ok=True)
-
-    shutil.move(str(file_path), str(new_path))
-
-    if new_path.exists():
-        return True
-    return False
-
-
 def move_file_to_plex(file_path):
     new_path_parts = list(file_path.parts)
-    new_path_parts[new_path_parts.index('Jellyfin')] = 'Plex'
+    new_path_parts[new_path_parts.index('Processing')] = 'Plex'
     new_path = Path(*new_path_parts)
 
     new_path.parent.mkdir(parents=True, exist_ok=True)
